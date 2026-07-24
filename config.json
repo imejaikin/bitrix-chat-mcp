@@ -1,0 +1,10 @@
+{
+  "chats": [
+    "chat10833",
+    "chat10887",
+    "chat10791",
+    "chat10067"
+  ],
+  "syncPageLimit": 50,
+  "maxPagesPerChat": 12
+}
