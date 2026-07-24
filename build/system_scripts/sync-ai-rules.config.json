@@ -1,0 +1,12 @@
+{
+  "prune_dirs": [
+    ".git",
+    ".cursor",
+    ".idea",
+    ".vscode",
+    "__pycache__",
+    "data",
+    "node_modules"
+  ],
+  "allowlist": []
+}

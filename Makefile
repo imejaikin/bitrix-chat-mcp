@@ -17,7 +17,13 @@ ui:        ## локальная страница настройки (тольк
 serve:     ## MCP-сервер (stdio)
 	node src/server.mjs
 
+ai-rules:  ## перегенерировать AGENTS.md/CLAUDE.md из .cursorrules и .cursor/rules
+	python3 build/system_scripts/sync-ai-rules.py generate
+
+ai-rules-check: ## проверить, что навигационный слой не разъехался
+	python3 build/system_scripts/sync-ai-rules.py check
+
 help:
 	@grep -E '^[a-z-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "};{printf "  %-10s %s\n", $$1, $$2}'
 
-.PHONY: install sync status ui serve help
+.PHONY: install sync status ui serve ai-rules ai-rules-check help
