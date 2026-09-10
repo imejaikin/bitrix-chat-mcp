@@ -4,13 +4,13 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { openDb, ftsQuery, userName } from './lib/db.mjs';
+import { openDb, ftsQuery, userName, displayChat } from './lib/db.mjs';
 import { webhookUrl, readConfig } from './lib/bitrix.mjs';
 import { pendingQuestions, openPromises, selfIdFromWebhook } from './lib/attention.mjs';
 
 const db = openDb();
 const text = (s) => ({ content: [{ type: 'text', text: s }] });
-const title = (id) => db.prepare('SELECT title FROM known_chats WHERE dialog_id=?').get(id)?.title ?? id;
+const title = (id) => displayChat(db, id);
 const fmt = (m) => `[${(m.date ?? '').slice(0, 16).replace('T', ' ')}] ${userName(db, m.author_id)} (${title(m.dialog_id)} · msg ${m.id})`;
 
 const found = (rows, render) => rows.map(render).join('\n\n');

@@ -40,6 +40,22 @@ export function openDb() {
 
     CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT);
 
+    -- Треды (комментарии к сообщению). В Bitrix это отдельный скрытый чат,
+    -- поэтому связь хранится явно: какое сообщение какого чата обсуждают.
+    -- Курсор свой, как у обычного чата: перекачивать ветку целиком нельзя.
+    CREATE TABLE IF NOT EXISTS threads (
+      thread_dialog_id  TEXT PRIMARY KEY,
+      parent_dialog_id  TEXT NOT NULL,
+      parent_message_id INTEGER NOT NULL,
+      last_message_id   INTEGER DEFAULT 0,
+      -- messageCount из commentInfo на момент прошлой закачки. Считать строки
+      -- в базе для этого нельзя: системные и пустые мы не индексируем, и своё
+      -- число всегда меньше — ветка качалась бы на каждом прогоне.
+      message_count     INTEGER DEFAULT 0,
+      synced_at         TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_threads_parent ON threads(parent_dialog_id, parent_message_id);
+
     -- Закладки: то, ради чего всё затевалось — не терять важные замечания.
     CREATE TABLE IF NOT EXISTS pins (
       message_id INTEGER PRIMARY KEY,
@@ -47,6 +63,18 @@ export function openDb() {
       pinned_at  TEXT
     );
   `);
+
+  // Миграция: колонка появилась вместе с тредами, а база уже существует
+  // у всех, кто зеркалит с февраля. CREATE TABLE IF NOT EXISTS её не добавит.
+  const cols = db.prepare('PRAGMA table_info(messages)').all().map((c) => c.name);
+  if (!cols.includes('parent_message_id')) {
+    db.exec('ALTER TABLE messages ADD COLUMN parent_message_id INTEGER');
+  }
+  const threadCols = db.prepare('PRAGMA table_info(threads)').all().map((c) => c.name);
+  if (threadCols.length && !threadCols.includes('message_count')) {
+    db.exec('ALTER TABLE threads ADD COLUMN message_count INTEGER DEFAULT 0');
+  }
+
   return db;
 }
 
@@ -62,3 +90,20 @@ export const userName = (db, id) =>
 
 export const chatTitle = (db, dialogId) =>
   db.prepare('SELECT title FROM chats WHERE dialog_id=?').get(dialogId)?.title ?? dialogId;
+
+/**
+ * Как показать чат сообщения, если сообщение лежит в треде.
+ *
+ * Тред в Bitrix — отдельный скрытый чат, и в `known_chats` его нет: в выдаче
+ * оставался голый `chat11115`, по которому непонятно ни где это, ни о чём.
+ * Показываем родителя и помечаем, что это ветка.
+ */
+export function displayChat(db, dialogId) {
+  const own = db.prepare('SELECT title FROM known_chats WHERE dialog_id=?').get(dialogId)?.title;
+  if (own) return own;
+  const parent = db.prepare('SELECT parent_dialog_id FROM threads WHERE thread_dialog_id=?').get(dialogId);
+  if (!parent) return dialogId;
+  const parentTitle = db.prepare('SELECT title FROM known_chats WHERE dialog_id=?').get(parent.parent_dialog_id)?.title
+    ?? parent.parent_dialog_id;
+  return `${parentTitle} · тред`;
+}
