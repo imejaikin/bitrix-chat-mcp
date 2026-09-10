@@ -4,12 +4,15 @@
   "private": true,
   "type": "module",
   "description": "Локальное зеркало истории чатов Bitrix24 с точным поиском (MCP). Дополняет bitrix24-local-mcp: тот про живое состояние и запись, этот — про память.",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "sync": "node src/sync.mjs",
     "status": "node src/status.mjs",
     "ui": "node src/ui.mjs",
-    "serve": "node src/server.mjs"
+    "serve": "node src/server.mjs",
+    "test": "node --test"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",

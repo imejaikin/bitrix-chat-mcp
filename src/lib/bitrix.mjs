@@ -45,5 +45,12 @@ export async function callBitrix(method, params = {}) {
   return json.result;
 }
 
-export const readConfig = () => JSON.parse(readFileSync(join(ROOT, 'config.json'), 'utf8'));
+/** Конфиг в git не хранится: в нём перечислены чаты, включая личные переписки —
+ *  по одному этому списку видно, с кем человек общается. В репозитории лежит
+ *  только пример, с него и начинаем, если своего ещё нет. */
+export const readConfig = () => {
+  const own = join(ROOT, 'config.json');
+  const example = join(ROOT, 'config.example.json');
+  return JSON.parse(readFileSync(existsSync(own) ? own : example, 'utf8'));
+};
 export const CONFIG_PATH = join(ROOT, 'config.json');

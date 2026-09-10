@@ -5,11 +5,15 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { openDb, ftsQuery, userName } from './lib/db.mjs';
+import { webhookUrl, readConfig } from './lib/bitrix.mjs';
+import { pendingQuestions, openPromises, selfIdFromWebhook } from './lib/attention.mjs';
 
 const db = openDb();
 const text = (s) => ({ content: [{ type: 'text', text: s }] });
 const title = (id) => db.prepare('SELECT title FROM known_chats WHERE dialog_id=?').get(id)?.title ?? id;
 const fmt = (m) => `[${(m.date ?? '').slice(0, 16).replace('T', ' ')}] ${userName(db, m.author_id)} (${title(m.dialog_id)} · msg ${m.id})`;
+
+const found = (rows, render) => rows.map(render).join('\n\n');
 
 const server = new McpServer({ name: 'bitrix-chat', version: '0.1.0' });
 
@@ -117,5 +121,85 @@ server.registerTool(
     return text(rows.map((r) => `${fmt(r)}\nЗачем: ${r.note}\n${r.text.slice(0, 400)}`).join('\n\n'));
   }
 );
+
+// --- что просело между чатами ---------------------------------------------
+//
+// Обе выборки читают одно и то же окно истории и обе опираются на «писал ли я
+// в этом чате после». Точного «ответа именно на это» из зеркала не достать, и
+// вечное напоминание про закрытый вопрос хуже пропуска — признак грубый нарочно.
+
+/** Сообщения за последние N дней, вместе с датой моего последнего сообщения
+ *  в каждом чате: по ней и решается, отвечал я после или нет. */
+function attentionWindow(days) {
+  const since = new Date(Date.now() - days * 86400000).toISOString();
+  const messages = db.prepare('SELECT id, dialog_id, author_id, date, text FROM messages WHERE date >= ? ORDER BY date').all(since);
+  const myLastByDialog = {};
+  for (const r of db.prepare('SELECT dialog_id, MAX(date) AS last FROM messages WHERE author_id = ? GROUP BY dialog_id').all(selfId())) {
+    myLastByDialog[r.dialog_id] = r.last;
+  }
+  return { since, messages, myLastByDialog };
+}
+
+let cachedSelfId = null;
+function selfId() {
+  if (cachedSelfId === null) {
+    cachedSelfId = selfIdFromWebhook(webhookUrl());
+    if (!cachedSelfId) throw new Error('Не удалось определить свой user_id из BITRIX24_WEBHOOK_URL');
+  }
+  return cachedSelfId;
+}
+
+//: Слова моей зоны: по ним вопрос считается адресованным мне даже без прямого
+//: упоминания. Список свой у каждого, поэтому живёт в config.json (`topics`),
+//: а не в коде. Пустой список — ищем только прямые упоминания и личку.
+const МОИ_ТЕМЫ = (readConfig().topics ?? []).map((t) => String(t).toLowerCase()).filter(Boolean);
+
+server.registerTool(
+  'answer_pending',
+  {
+    title: 'Вопросы ко мне без ответа',
+    description:
+      'Вопросы, адресованные мне за последние дни, после которых я в том же чате ничего не написал. ' +
+      'Считает по зеркалу, в Bitrix не ходит. Признак грубый: показывает лишнее охотнее, чем пропускает. ' +
+      'Ответить можно через im_send_message (bitrix24) — этот сервер не пишет в Bitrix.',
+    inputSchema: {
+      days: z.number().optional().describe('окно в днях, по умолчанию 7'),
+      chat: z.string().optional().describe('ограничить чатом, например chat13851'),
+    },
+  },
+  async ({ days = 7, chat }) => {
+    const { since, messages, myLastByDialog } = attentionWindow(days);
+    const найдено = pendingQuestions(messages, { selfId: selfId(), myLastByDialog, topics: МОИ_ТЕМЫ })
+      .filter((q) => !chat || q.dialog_id === chat);
+    if (!найдено.length) return text(`Вопросов без ответа за ${days} дн. не нашлось (с ${since.slice(0, 10)}).`);
+    return text(
+      found(найдено, (q) => `${fmt(q)} · ${q.reason}\n${q.text.slice(0, 400)}`) +
+      '\n\nОкружение: chat_context(message_id).'
+    );
+  }
+);
+
+server.registerTool(
+  'my_promises',
+  {
+    title: 'Что я пообещал',
+    description:
+      'Мои же сообщения вида «сделаю / отпишу / пришлю» за последние дни. Выполнено обещание или нет, ' +
+      'зеркало не знает — «сделаю» закрывается коммитом, а не сообщением; поэтому помечается только то, ' +
+      'писал ли я в этом чате после (silent_since). Молчание после обещания — самый частый случай забытого.',
+    inputSchema: {
+      days: z.number().optional().describe('окно в днях, по умолчанию 14'),
+      silent_only: z.boolean().optional().describe('только те, после которых я в чате молчу'),
+    },
+  },
+  async ({ days = 14, silent_only = false }) => {
+    const { since, messages, myLastByDialog } = attentionWindow(days);
+    const найдено = openPromises(messages, { selfId: selfId(), myLastByDialog })
+      .filter((p) => !silent_only || p.silent_since);
+    if (!найдено.length) return text(`Обещаний за ${days} дн. не нашлось (с ${since.slice(0, 10)}).`);
+    return text(found(найдено, (p) => `${fmt(p)}${p.silent_since ? ' · после этого молчу' : ''}\n${p.text.slice(0, 400)}`));
+  }
+);
+
 
 await server.connect(new StdioServerTransport());
